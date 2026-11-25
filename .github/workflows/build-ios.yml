@@ -1,0 +1,76 @@
+name: Build iOS Native App (Pathway 3)
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-ipa:
+    runs-on: macos-14
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Select Xcode Version
+        run: sudo xcode-select -switch /Applications/Xcode_15.4.app
+
+      - name: Build and Package IPA
+        run: |
+          echo "Starting Native SwiftUI build for AALDiam Vault..."
+          mkdir -p build/Payload/AALDiamAdmin.app
+
+          # Find all Swift source files
+          SWIFT_FILES=$(find AALDiamAdmin -name "*.swift")
+          echo "Compiling Swift files:"
+          echo "$SWIFT_FILES"
+
+          # Compile Swift executable for iOS Device (arm64, physical iPhone)
+          swiftc -target arm64-apple-ios16.0 \
+            -sdk $(xcrun --sdk iphoneos --show-sdk-path) \
+            -parse-as-library \
+            -O \
+            $SWIFT_FILES \
+            -o build/Payload/AALDiamAdmin.app/AALDiamAdmin
+
+          chmod +x build/Payload/AALDiamAdmin.app/AALDiamAdmin
+
+          # Copy Info.plist
+          cp AALDiamAdmin/Info.plist build/Payload/AALDiamAdmin.app/Info.plist
+
+          # Copy App Icons if present
+          if [ -f AALDiamAdmin/AppIcon60x60@2x.png ]; then
+            cp AALDiamAdmin/AppIcon60x60@2x.png build/Payload/AALDiamAdmin.app/AppIcon60x60@2x.png
+            cp AALDiamAdmin/AppIcon60x60@3x.png build/Payload/AALDiamAdmin.app/AppIcon60x60@3x.png
+          fi
+
+          # Ad-hoc codesign (allows AltStore to re-sign with personal Apple ID)
+          codesign -s - --force --deep build/Payload/AALDiamAdmin.app
+
+          # Create IPA archive
+          cd build
+          zip -r aaldiam-admin.ipa Payload
+          echo "Successfully generated aaldiam-admin.ipa!"
+          ls -lh aaldiam-admin.ipa
+
+      - name: Upload IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aaldiam-admin-ipa
+          path: build/aaldiam-admin.ipa
+          retention-days: 7
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+        with:
+          tag_name: v2.1.0-ios
+          name: "AALDiam iOS Superadmin v2.1.0"
+          body: "Official compiled native iOS IPA for AALDiam Superadmin Vault. Compatible with AltStore on Windows."
+          files: build/aaldiam-admin.ipa
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
